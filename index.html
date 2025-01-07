@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>语音对话应用</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f4f8;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            height: 100vh;
+            margin: 0;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        #chat-container {
+            width: 100%;
+            max-width: 600px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        #chatbox {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin: 10px 0;
+            display: flex;
+        }
+        .user .msg-content {
+            background-color: #0084ff;
+            color: #fff;
+            align-self: flex-end;
+            border-radius: 15px 15px 0 15px;
+        }
+        .bot .msg-content {
+            background-color: #e5e5ea;
+            color: #000;
+            align-self: flex-start;
+            border-radius: 15px 15px 15px 0;
+        }
+        .msg-content {
+            padding: 10px 15px;
+            max-width: 80%;
+            word-wrap: break-word;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #controls {
+            padding: 15px;
+            background-color: #fff;
+            border-top: 1px solid #ddd;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        #voice-btn {
+            background-color: #28a745;
+            border: none;
+            color: #fff;
+            padding: 15px;
+            border-radius: 50%;
+            font-size: 24px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        #voice-btn:hover {
+            background-color: #218838;
+        }
+        #status {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 14px;
+            color: #555;
+        }
+        /* Loading Spinner */
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Responsive Design */
+        @media (max-width: 600px) {
+            #chat-container {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>语音对话应用</h1>
+    <div id="chat-container">
+        <div id="chatbox"></div>
+        <div id="controls">
+            <button id="voice-btn" title="点击开始说话">🎤</button>
+            <div id="status"></div>
+        </div>
+    </div>
+
+    <script>
+        const chatbox = document.getElementById('chatbox');
+        const voiceBtn = document.getElementById('voice-btn');
+        const statusDiv = document.getElementById('status');
+
+        // 替换为你的 Hugging Face API Token
+        const HF_API_TOKEN = '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';
+
+        // 初始化语音识别
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert('抱歉，您的浏览器不支持语音识别功能。请使用最新版本的 Chrome、Edge 或 Firefox。');
+        }
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'zh-CN';
+        recognition.interimResults = false;
+
+        let isProcessing = false;
+
+        voiceBtn.addEventListener('click', () => {
+            if (isProcessing) return; // 防止重复点击
+            recognition.start();
+            isProcessing = true;
+            updateStatus('识别中...');
+            showSpinner();
+        });
+
+        recognition.onresult = async (event) => {
+            const transcript = event.results[0][0].transcript.trim();
+            addMessage(transcript, 'user');
+            updateStatus('处理中...');
+            const response = await getBotResponse(transcript);
+            addMessage(response, 'bot');
+            resetState();
+        };
+
+        recognition.onerror = (event) => {
+            console.error('识别错误:', event.error);
+            let errorMessage = '抱歉，识别过程中出现了错误。';
+            switch(event.error) {
+                case 'no-speech':
+                    errorMessage = '未检测到语音，请再试一次。';
+                    break;
+                case 'audio-capture':
+                    errorMessage = '未检测到麦克风，请检查麦克风设置。';
+                    break;
+                case 'not-allowed':
+                    errorMessage = '麦克风权限被拒绝，请允许访问麦克风。';
+                    break;
+                default:
+                    errorMessage = `识别错误: ${event.error}`;
+            }
+            addMessage(errorMessage, 'bot');
+            resetState();
+        };
+
+        recognition.onend = () => {
+            if (isProcessing) {
+                resetState();
+            }
+        };
+
+        function addMessage(message, sender) {
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('message', sender);
+            const msgContent = document.createElement('div');
+            msgContent.classList.add('msg-content');
+            msgContent.textContent = message;
+            msgDiv.appendChild(msgContent);
+            chatbox.appendChild(msgDiv);
+            chatbox.scrollTop = chatbox.scrollHeight;
+        }
+
+        async function getBotResponse(text) {
+            try {
+                const response = await fetch('https://api-inference.huggingface.co/models/facebook/blenderbot-400M-distill', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${HF_API_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ inputs: text })
+                });
+
+                if (!response.ok) {
+                    if (response.status === 503) {
+                        return '抱歉，服务暂时不可用。请稍后再试。';
+                    }
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                // 根据模型返回的数据结构调整
+                return data.generated_text || '抱歉，我无法理解你的意思。';
+            } catch (error) {
+                console.error('API 请求错误:', error);
+                return '抱歉，无法获取响应。请检查您的网络连接或稍后再试。';
+            }
+        }
+
+        function updateStatus(message) {
+            statusDiv.textContent = message;
+        }
+
+        function showSpinner() {
+            const spinner = document.createElement('div');
+            spinner.classList.add('spinner');
+            spinner.id = 'spinner';
+            statusDiv.appendChild(spinner);
+        }
+
+        function hideSpinner() {
+            const spinner = document.getElementById('spinner');
+            if (spinner) {
+                spinner.remove();
+            }
+        }
+
+        function resetState() {
+            isProcessing = false;
+            updateStatus('');
+            hideSpinner();
+        }
+    </script>
+
+</body>
+</html>
